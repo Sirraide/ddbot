@@ -1,10 +1,9 @@
-#define DEBUG
-
 #include "token.h"
 
 #include <clocale>
 #include <dpp/dpp.h>
 #include <dpp/fmt/format.h>
+#include <future>
 #include <iostream>
 #include <list>
 #include <random>
@@ -27,21 +26,27 @@ struct triple {
 	[[nodiscard]] constexpr inline unsigned colour() const { return a << 16 | b << 8 | c; }
 };
 
-constexpr triple<uint8_t> green{109, 58, 59};
-//constexpr triple<uint8_t> yellow{52, 97, 75};
-constexpr triple<uint8_t> red{0, 56, 54};
+constexpr const triple<uint8_t> green{109, 58, 59};
+constexpr const triple<uint8_t> red{0, 56, 54};
 
-cluster bot(TOKEN);
+cluster		  bot(TOKEN);
 random_device rd;
-
 
 // clang-format off
 template <typename T = int>
 inline T tryval(const interaction_create_t& event, const string& name, T _default) noexcept {
 	try { return get<T>(event.get_parameter(name)); } catch (const exception& ignored) { return _default; }
 }
+
 // clang-format on
 
+template <typename T = unsigned>
+inline bool trystrtol(T* i, const string& str) {
+	try {
+		*i = strtol(str.c_str(), nullptr, 10);
+		return true;
+	} catch (const std::exception& ignored) { return false; }
+}
 
 constexpr triple<uint8_t> hsl2rgb(triple<uint8_t> hsl) {
 	double h = hsl.a, s = hsl.b, l = hsl.c;
@@ -49,10 +54,10 @@ constexpr triple<uint8_t> hsl2rgb(triple<uint8_t> hsl) {
 	s /= 100.0;
 	l /= 100.0;
 
-	double c = (1.0 - abs(2.0 * l - 1.0)) * s;
+	double c   = (1.0 - abs(2.0 * l - 1.0)) * s;
 	double h60 = h / 60.0;
-	double x = c * (1.0 - abs(fmod(h60, 2.0) - 1.0));
-	double m = l - c / 2.0;
+	double x   = c * (1.0 - abs(fmod(h60, 2.0) - 1.0));
+	double m   = l - c / 2.0;
 
 	triple<double> rgb{};
 
@@ -82,7 +87,7 @@ constexpr triple<uint8_t> lerp(triple<uint8_t> from, triple<uint8_t> to, double 
 }
 
 constexpr unsigned CalculateColour(unsigned die, unsigned total, unsigned num) {
-	return hsl2rgb(lerp(red, green, double(total) / double(die * num - num))).colour();
+	return hsl2rgb(lerp(red, green, double(total - num) / double(die * num - num))).colour();
 }
 
 message roll(int die, int num, const string& name, const string& url, snowflake channel_id) {
@@ -93,11 +98,11 @@ message roll(int die, int num, const string& name, const string& url, snowflake 
 	unsigned total = 0;
 
 	bool first = true;
-	repeat(num) {
+	repeat (num) {
 		if (!first) result += ", ";
 		auto val   = distribution(rand);
-		bool nat20 = die == 20 && val == 20;
-		result += fmt::format("{}{}{}", nat20 ? "**" : "", val, nat20 ? "**" : "");
+		bool natural = val == die;
+		result += fmt::format("{}{}{}", natural ? "**" : "", val, natural ? "**" : "");
 		total += val;
 		first = false;
 	}
@@ -109,6 +114,21 @@ message roll(int die, int num, const string& name, const string& url, snowflake 
 	if (num > 1) e.add_field("Total", to_string(total));
 
 	return {channel_id, e};
+}
+
+vector<string> split(const string& str) {
+	string		   buf;
+	vector<string> ret;
+
+	for (auto& c : str) {
+		if (isspace(c)) {
+			if (!buf.empty()) ret.push_back(buf);
+			buf.clear();
+			continue;
+		}
+		buf += c;
+	}
+	return ret;
 }
 
 #define RegisterCommand(command)                                                             \
@@ -137,6 +157,10 @@ void RegisterCommands() {
 	RegisterCommand(roll);
 }
 
+void reply(message* msg, message answer) {
+	answer.set_reference(msg->id);
+	bot.message_create(answer);
+}
 
 void InitialiseCommandHandler() {
 	bot.on_interaction_create([](const interaction_create_t& event) {
@@ -158,27 +182,52 @@ void InitialiseCommandHandler() {
 
 		event.reply(ir_channel_message_with_source, fmt::format("Error: unknown command '{}'", data.name));
 	});
+
+	bot.on_message_create([](const message_create_t& event) {
+		if (event.msg->content.starts_with("!roll")) {
+			auto	 argv = split(event.msg->content);
+			auto	 argc = argv.size();
+			int die = 20, num = 1;
+
+			if (argc > 1) {
+				if(!trystrtol(&die, argv[1])) {
+					reply(event.msg, fmt::format("**Error:** '{}' is not a number", argv[1]));
+					return;
+				}
+			}
+			if(argc > 2) {
+				if(!trystrtol(&num, argv[2])) {
+					reply(event.msg, fmt::format("**Error:** '{}' is not a number", argv[2]));
+					return;
+				}
+				clamp(num, 1, 1000);
+			}
+			string	  url;
+			string	  name		 = event.msg->member.nickname;
+
+			promise<void> prom;
+			bot.user_get(event.msg->member.user_id, [&](const confirmation_callback_t & ev) {
+				url = get<user>(ev.value).get_avatar_url();
+				prom.set_value();
+			});
+			auto f = prom.get_future();
+			f.get();
+
+			reply(event.msg, roll(die, num, name, url, event.msg->channel_id));
+
+		}
+	});
 }
 
 int main() {
 	setlocale(LC_ALL, "");
-
-//	for(unsigned i = 1; i <= 20; i++) {
-//		cout << "<div id=\"n" << i << "\"></div>" << endl;
-//	}
-//
-//	cout << endl << endl;
-//	for(unsigned i = 1; i <= 20; i++) {
-//		auto x =  CalculateColour(20, i, 1);
-//		cout << "#n" << i << "{ background: #" << hex << x << dec << ";}" << endl;
-//	}
 
 	InitialiseCommandHandler();
 
 	bot.on_ready([](const ready_t& event) {
 		(void) event;
 		cerr << "d&dbot is online\n";
-		//RegisterCommands();
+		RegisterCommands();
 	});
 
 	bot.start(false);
