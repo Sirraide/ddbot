@@ -99,9 +99,10 @@ constexpr triple<uint8_t> lerp(triple<uint8_t> from, triple<uint8_t> to, double 
  * */
 constexpr unsigned CalculateColour(unsigned die, unsigned total, unsigned num) {
 	/** lerp assumes that the lower bound is equal to 0; the lowest possible roll, however,
-	 * is equal to the number of dice (assuming all 1s), and therefore, double(total - num)
-	 * yields the correct lower bound for the lerp. Accordingly, the highest achievable roll
-	 * must also be reduced by 1 * the number of dice: double(die * num - num) */
+	 * is equal to the number of dice (assuming all 1s), and therefore, double(total - num),
+	 * divided by the maximum number of points achievable, yields the correct lower bound for the lerp.
+	 * Accordingly, the highest achievable roll * must also be reduced by 1 * the number of dice for the
+	 * purposes of this calculation: double(die * num - num) */
 	return hsl2rgb(lerp(red, green, double(total - num) / double(die * num - num))).colour();
 }
 
