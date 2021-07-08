@@ -13,6 +13,7 @@ using namespace dpp;
 
 #define repeat(N_) for (size_t iter__ = 0, until__ = N_; iter__ < until__; iter__++)
 
+/** Helper struct for storing rgb and hsl triples */
 template <typename T>
 struct triple {
 	T a;
@@ -23,9 +24,11 @@ struct triple {
 	constexpr triple(T a, T b, T c) : a(a), b(b), c(c) {}
 	constexpr triple(unsigned val) : a(val >> 16 & 0xff), b(val >> 8 & 0xff), c(val & 0xff) {}
 
+	/** returns the colour stored as an unsigned */
 	[[nodiscard]] constexpr inline unsigned colour() const { return a << 16 | b << 8 | c; }
 };
 
+/** hsl green and red */
 constexpr const triple<uint8_t> green{109, 58, 59};
 constexpr const triple<uint8_t> red{0, 56, 54};
 
@@ -33,6 +36,8 @@ cluster		  bot(TOKEN);
 random_device rd;
 
 // clang-format off
+/** Wrapper around event.get_parameter, since variant::get in conjunction with event.get_parameter seems to throw
+ * if the parameter in question does not exist */
 template <typename T = int>
 inline T tryval(const interaction_create_t& event, const string& name, T _default) noexcept {
 	try { return get<T>(event.get_parameter(name)); } catch (const exception& ignored) { return _default; }
@@ -40,6 +45,7 @@ inline T tryval(const interaction_create_t& event, const string& name, T _defaul
 
 // clang-format on
 
+/** Wrapper around strtol since it throws if the string passes to is not a valid number */
 template <typename T = unsigned>
 inline bool trystrtol(T* i, const string& str) {
 	try {
@@ -86,7 +92,16 @@ constexpr triple<uint8_t> lerp(triple<uint8_t> from, triple<uint8_t> to, double 
 	return {uint8_t(a), uint8_t(b), uint8_t(c)};
 }
 
+/**
+ * @param die what type of die was used (e.g. 20 = d20)
+ * @param total the sum of all rolls
+ * @param num the number of rolls
+ * */
 constexpr unsigned CalculateColour(unsigned die, unsigned total, unsigned num) {
+	/** lerp assumes that the lower bound is equal to 0; the lowest possible roll, however,
+	 * is equal to the number of dice (assuming all 1s), and therefore, double(total - num)
+	 * yields the correct lower bound for the lerp. Accordingly, the highest achievable roll
+	 * must also be reduced by 1 * the number of dice: double(die * num - num) */
 	return hsl2rgb(lerp(red, green, double(total - num) / double(die * num - num))).colour();
 }
 
@@ -100,7 +115,7 @@ message roll(int die, int num, const string& name, const string& url, snowflake 
 	bool first = true;
 	repeat (num) {
 		if (!first) result += ", ";
-		auto val   = distribution(rand);
+		auto val	 = distribution(rand);
 		bool natural = val == die;
 		result += fmt::format("{}{}{}", natural ? "**" : "", val, natural ? "**" : "");
 		total += val;
@@ -183,30 +198,34 @@ void InitialiseCommandHandler() {
 		event.reply(ir_channel_message_with_source, fmt::format("Error: unknown command '{}'", data.name));
 	});
 
+	/** Alternative to slash command. Currently not fully functional. */
 	bot.on_message_create([](const message_create_t& event) {
 		if (event.msg->content.starts_with("!roll")) {
-			auto	 argv = split(event.msg->content);
-			auto	 argc = argv.size();
-			int die = 20, num = 1;
+			auto argv = split(event.msg->content);
+			auto argc = argv.size();
+			int	 die = 20, num = 1;
 
 			if (argc > 1) {
-				if(!trystrtol(&die, argv[1])) {
+				if (!trystrtol(&die, argv[1])) {
 					reply(event.msg, fmt::format("**Error:** '{}' is not a number", argv[1]));
 					return;
 				}
 			}
-			if(argc > 2) {
-				if(!trystrtol(&num, argv[2])) {
+			if (argc > 2) {
+				if (!trystrtol(&num, argv[2])) {
 					reply(event.msg, fmt::format("**Error:** '{}' is not a number", argv[2]));
 					return;
 				}
 				clamp(num, 1, 1000);
 			}
-			string	  url;
-			string	  name		 = event.msg->member.nickname;
+			string url;
+			string name = event.msg->member.nickname;
 
+			/** The promise.set_value(), prom.get_future().get() pattern is required to synchronise this function with the
+			 * asynchronous callback passed to bot.user_get() below. Omitting it would result in execution of this function
+			 * completing before the required user data is available. */
 			promise<void> prom;
-			bot.user_get(event.msg->member.user_id, [&](const confirmation_callback_t & ev) {
+			bot.user_get(event.msg->member.user_id, [&](const confirmation_callback_t& ev) {
 				url = get<user>(ev.value).get_avatar_url();
 				prom.set_value();
 			});
@@ -214,7 +233,6 @@ void InitialiseCommandHandler() {
 			f.get();
 
 			reply(event.msg, roll(die, num, name, url, event.msg->channel_id));
-
 		}
 	});
 }
@@ -227,6 +245,9 @@ int main() {
 	bot.on_ready([](const ready_t& event) {
 		(void) event;
 		cerr << "d&dbot is online\n";
+		/** Uncomment the following line only if the command itself (defined in the RegisterCommands() function) was modified or if new commands
+		 * have been added, and comment it out otherwise. Commands stay registered irrespective of whether the bot is running or not. There is no
+		 * need to re-register it every single time the bot restarts. */
 		RegisterCommands();
 	});
 
